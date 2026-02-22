@@ -18,6 +18,7 @@ from Tilda.Driver.TritonListener.DummyTritonScanDevice import DummyScanDevice
 from Tilda.Driver.TritonListener.TritonDeviceBase import DeviceBase
 from Tilda.PolliFit import TildaTools as TiTs
 from Tilda.Driver.ScanDevice.BaseTildaScanDeviceControl import BaseTildaScanDeviceControl
+from Tilda.Driver.ScanDevice.NiUsb6225ScanDevice import NiUsb6225ScanDevice
 
 
 class TritonScanDevControl(DeviceBase, BaseTildaScanDeviceControl):
@@ -174,6 +175,11 @@ class TritonScanDevControl(DeviceBase, BaseTildaScanDeviceControl):
         else:
             logging.warning('no db connection, returning local DummyScanDev!')
             dev_types = [self.dummy_scan_dev_type, 'Matisse']
+
+        ni_ao_channels = NiUsb6225ScanDevice.available_channels()
+        if (ni_ao_channels or NiUsb6225ScanDevice._nidaq_available()) and \
+                NiUsb6225ScanDevice.DEV_TYPE not in dev_types:
+            dev_types.append(NiUsb6225ScanDevice.DEV_TYPE)
         return dev_types
 
     def available_scan_dev_names_by_type(self, dev_type):
@@ -183,6 +189,9 @@ class TritonScanDevControl(DeviceBase, BaseTildaScanDeviceControl):
         :return: list of strings, ['dev_name1', 'dev_name2', ... ]
         """
         dev_names = []
+
+        if dev_type == NiUsb6225ScanDevice.DEV_TYPE:
+            return NiUsb6225ScanDevice.available_channels()
 
         if self.db != 'local':
             self.dbCur_execute("SELECT deviceName FROM devices WHERE deviceType = %s", (dev_type,))
@@ -355,6 +364,10 @@ class TritonScanDevControl(DeviceBase, BaseTildaScanDeviceControl):
             'stepSizeLimit': (7.628880920000002e-05, 15.0)
         }
         """
+        if dev_type == NiUsb6225ScanDevice.DEV_TYPE and (dev_name is None or dev_name == ''):
+            ni_channels = NiUsb6225ScanDevice.available_channels()
+            dev_name = ni_channels[0] if ni_channels else ''
+
         if dev_type is None and dev_name is None and self.scan_dev_pars != {}:
             # is subscribed to a scan_dev return real dev pars, otherwise return from storage
             dev_type = self.scan_dev_type
@@ -433,6 +446,10 @@ class TritonScanDevControl(DeviceBase, BaseTildaScanDeviceControl):
             step_min_max = (-10.0, 10.0)  # default
             set_val_min_max = (0.01, 10000000.0)  # default
             unit_name = self.possible_units.frequency_mhz.name
+        elif dev_type == NiUsb6225ScanDevice.DEV_TYPE:
+            step_min_max = NiUsb6225ScanDevice.STEP_SIZE_LIMIT
+            set_val_min_max = NiUsb6225ScanDevice.SET_VAL_LIMIT
+            unit_name = self.possible_units.line_volts.name
 
         # add more devs by elif
 
