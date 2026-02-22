@@ -4,3 +4,4 @@
 /venv32/
 /Tilda.egg-info/
 /Tilda/TildaTarget/Labview14/FPGA Bitfiles/
+**/__pycache__/
