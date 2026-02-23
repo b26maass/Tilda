@@ -11,7 +11,6 @@ import time
 import gc
 from copy import deepcopy
 from datetime import datetime, timedelta
-from typing import Optional
 
 import numpy as np
 from PyQt5 import QtWidgets, Qt
@@ -42,8 +41,6 @@ if InfluxConfig.useinfluxoversql:
 else:
     from Tilda.Driver.SQLStream.SQLStream import SQLStream as db_logger
     logging.info("using SQL as database source")
-from Tilda.Driver.ProteusListener.ProteusLogger import ProteusLogger
-from Tilda.Driver.ProteusListener.ProteusBridge import TildaProteusBridge
 
 
 class ScanMain(QObject):
@@ -95,12 +92,6 @@ class ScanMain(QObject):
         self.sql_stream = db_logger()  #SQLStream()
         self.sql_pre_scan_done = False  # bool to use when pre/during/post scan measurement of sql stream is completed
 
-        # helper object for logging Proteus variables (logic lives on the Proteus side)
-        self.proteus_logger = None
-        self.proteus_bridge: Optional[TildaProteusBridge] = None
-        # bool to use when pre/during/post scan measurement of proteus is completed
-        self.proteus_pre_scan_done = False
-
         # create a Triton device for controling scans:
         self.triton_scan_controller_name = 'TildaScanDevCtl'
         self.triton_scan_controller = None
@@ -117,10 +108,6 @@ class ScanMain(QObject):
 
         self.datetime_of_last_raw_data_emit = datetime.now()
         self.timedelta_between_raw_data_emits = timedelta(milliseconds=250)
-
-        # Keep track of the currently active scan dict / track
-        self._active_scan_dict = None
-        self._active_track_name = None
 
 
     ''' scan main functions: '''
@@ -141,12 +128,6 @@ class ScanMain(QObject):
                 self.triton_scan_controller.deinit_scan_dev()
         except Exception as e:
             logging.error('could not stop TildaTritonScanControl, error is %s' % e, exc_info=True)
-        try:
-            if self.proteus_bridge is not None:
-                self.proteus_bridge.close()
-                self.proteus_bridge = None
-        except Exception as e:
-            logging.error('could not close Proteus bridge, error is %s' % e, exc_info=True)
 
     def prepare_scan(self, scan_dict):  # callback_sig=None):
         """
@@ -164,9 +145,6 @@ class ScanMain(QObject):
         t = datetime.today()
         unix_time = time.mktime(t.timetuple())
         scan_dict['pipeInternals']['curVoltInd'] = 0
-        # Remember this scan dict so we can use it for Proteus logging, etc.
-        self._active_scan_dict = scan_dict
-        self._active_track_name = None
         scan_dict['isotopeData']['isotopeStartTime'] = t.strftime('%Y-%m-%d %H:%M:%S')
         xml_file_name = TiTs.createXmlFileOneIsotope(scan_dict)
         scan_dict['pipeInternals']['activeXmlFilePath'] = xml_file_name
@@ -254,9 +232,7 @@ class ScanMain(QObject):
         triton_dict_is_none = triton_dict_pre_scan is None or triton_dict_pre_scan == {}
         sql_dict_pre_scan = scan_dict[act_track_name].get('sql', {}).get(pre_post_scan_meas_str, {})
         sql_dict_is_none = sql_dict_pre_scan is None or sql_dict_pre_scan == {}
-        proteus_dict_pre_scan = scan_dict[act_track_name].get('proteus', {}).get(pre_post_scan_meas_str, {})
-        proteus_dict_is_none = proteus_dict_pre_scan is None or proteus_dict_pre_scan == {}
-        if dmms_dict_is_none and triton_dict_is_none and sql_dict_is_none and proteus_dict_is_none:
+        if dmms_dict_is_none and triton_dict_is_none and sql_dict_is_none:
             # return false if no measurement is wanted due to no existing dicts in dmms / triton / SQL.
             return False
         else:
@@ -274,12 +250,6 @@ class ScanMain(QObject):
             #     # and SQL
             #     for ch_name, ch_dict in sql_dict_pre_scan.items():
             #         ch_dict['data'] = []
-            if not proteus_dict_is_none:
-                self.prepare_proteus_for_scan(
-                    scan_dict[act_track_name].get('proteus', {}),
-                    pre_post_scan_meas_str,
-                    act_track_name
-                )
             track_num = int(act_track_name[5:])
             self.fpga_start_offset_measurement(scan_dict, track_num,
                                                pre_post_scan_meas_str)  # will be the first track in list.
@@ -289,12 +259,9 @@ class ScanMain(QObject):
                 self.start_triton_log()
             if not sql_dict_is_none:
                 self.start_sql_log()
-            if not proteus_dict_is_none:
-                self.start_proteus_log()
             self.dmm_pre_scan_done = dmms_dict_is_none
             self.triton_pre_scan_done = triton_dict_is_none
             self.sql_pre_scan_done = sql_dict_is_none
-            self.proteus_pre_scan_done = proteus_dict_is_none
             return True
 
     def prescan_measurement(self, scan_dict, dmm_reading, pre_during_post_scan_str, tr_name, force_save_continue=False):
@@ -313,12 +280,7 @@ class ScanMain(QObject):
         if not self.sql_pre_scan_done:  # when complete, do not check again (otherwise it saves again.)
             self.sql_pre_scan_done = self.check_sql_log_complete(scan_dict, pre_during_post_scan_str,
                                                                  tr_name, force_save_continue=force_save_continue)
-        if not self.proteus_pre_scan_done:
-            self.proteus_pre_scan_done = self.check_proteus_log_complete(scan_dict, pre_during_post_scan_str,
-                                                                         tr_name,
-                                                                         force_save_continue=force_save_continue)
-        if (self.dmm_pre_scan_done and self.triton_pre_scan_done and self.sql_pre_scan_done
-                and self.proteus_pre_scan_done):
+        if self.dmm_pre_scan_done and self.triton_pre_scan_done and self.sql_pre_scan_done:
             return True
         else:
             return False
@@ -406,14 +368,13 @@ class ScanMain(QObject):
         :return:
         """
         if sc_dev_class is not None:
-            if sc_dev_class == 'Triton':
-                if dev_type == NiUsb6225ScanDevice.DEV_TYPE:
-                    # Local NI USB-6225 backend that keeps FPGA scan class on "Triton".
-                    self.scan_dev = NiUsb6225ScanDevice(sc_dev_n)
-                else:
-                    self.scan_dev = self.triton_scan_controller
-                    if sc_dev_n is not None:  # Tilda specific
-                        self.scan_dev.subscribe_to_scan_dev(sc_dev_n)
+            if dev_type == NiUsb6225ScanDevice.DEV_TYPE:
+                # Local NI USB-6225 backend (UI may group it under DAC, FPGA still handled separately).
+                self.scan_dev = NiUsb6225ScanDevice(sc_dev_n)
+            elif sc_dev_class == 'Triton':
+                self.scan_dev = self.triton_scan_controller
+                if sc_dev_n is not None:  # Tilda specific
+                    self.scan_dev.subscribe_to_scan_dev(sc_dev_n)
             elif sc_dev_class == 'DAC':
                 self.scan_dev = AD57X1ScanDev()
 
@@ -560,10 +521,7 @@ class ScanMain(QObject):
         will start the measurement for one track.
         After starting the measurement, the FPGA runs on its own.
         """
-        # Remember which track is currently being measured
-        self._active_scan_dict = scan_dict
         act_track_name = 'track' + str(track_num)
-        self._active_track_name = act_track_name
 
         track_dict = scan_dict.get(act_track_name)
         iso = scan_dict.get('isotopeData', {}).get('isotope')
@@ -582,29 +540,6 @@ class ScanMain(QObject):
         triton_dict_is_none = triton_dict_pre_scan is None or triton_dict_pre_scan == {}
         sql_dict_pre_scan = scan_dict[act_track_name].get('sql', {}).get('duringScan', {})
         sql_dict_is_none = sql_dict_pre_scan is None or sql_dict_pre_scan == {}
-        # start Proteus log for during scan if required
-        proteus_cfg = track_dict.get('proteus', {})
-        proteus_during = proteus_cfg.get('duringScan', {}) or {}
-
-        # Decide if there is anything to log
-        devs_cfg = proteus_during.get('devices', {}) or {}
-        instance = str(proteus_during.get('instance', '') or '').strip()
-        enabled = bool(proteus_during.get('enabled', True))
-
-        proteus_dict_is_none = (
-            not enabled
-            or not instance
-            or devs_cfg == {}
-        )
-
-        if not proteus_dict_is_none:
-            # This sets up a fresh ProteusLogger/Bridge for the duringScan phase
-            self.prepare_proteus_for_scan(
-                track_dict.get('proteus', {}),
-                'duringScan',
-                act_track_name,
-            )
-            self.start_proteus_log()
         if not triton_dict_is_none:
             self.start_triton_log()
         if not sql_dict_is_none:
@@ -728,26 +663,6 @@ class ScanMain(QObject):
         self.abort_triton_log()
         self.abort_sql_log()
         self.ppg_stop()
-        # --- Finish Proteus during-scan logging (if active) ---
-        try:
-            if (
-                self.proteus_logger is not None
-                and self._active_scan_dict is not None
-                and self._active_track_name is not None
-            ):
-                # Save whatever we have collected for duringScan
-                self.save_proteus_log(
-                    self._active_scan_dict,
-                    self._active_track_name,
-                    pre_during_post_scan_str='duringScan',
-                )
-        except Exception:
-            logging.exception(
-                "Error while saving Proteus duringScan log in stop_measurement"
-            )
-        finally:
-            # Make sure Proteus logging is stopped cleanly
-            self.abort_proteus_log()
         status = 'aborted' if Cfg._main_instance.abort_scan else 'completed'
         self.sql_stream.conclude_run_in_db(time.mktime(datetime.today().timetuple()), status)
         if read:
@@ -1336,236 +1251,6 @@ class ScanMain(QObject):
         else:
             return {}
 
-    """ Proteus related """
-
-    def prepare_proteus_for_scan(
-            self,
-            proteus_scan_dict: dict,
-            pre_post_scan_str: str = 'preScan',
-            track_name: str = 'track0',
-    ) -> None:
-        """
-        Prepare Proteus logging for a given track and pre/during/post phase.
-
-        If no instance/devices are configured or if anything goes wrong while
-        creating the bridge, Proteus logging is disabled and the scan proceeds
-        without waiting for Proteus.
-        """
-        # Clean up any previous bridge/logger for safety.
-        if getattr(self, "proteus_bridge", None) is not None:
-            try:
-                self.proteus_bridge.close()
-            except Exception:
-                logging.exception("prepare_proteus_for_scan: error while closing previous Proteus bridge")
-        self.proteus_bridge = None
-        self.proteus_logger = None
-
-        cfg = (proteus_scan_dict or {}).get(pre_post_scan_str, {}) or {}
-        instance_addr = (cfg.get("instance") or "").strip()
-        devices_cfg = (cfg.get("devices") or {}) or {}
-        enabled = bool(cfg.get("enabled", True))
-
-        if (not enabled) or (not instance_addr) or (not devices_cfg):
-            # Nothing configured for this phase -> do not use Proteus.
-            self.proteus_logger_done = True
-            self.proteus_logger_running = False
-            self.proteus_logger_timeout = False
-            self.proteus_logger_save_on_timeout = False
-            self.proteus_logger_timeout_time = None
-            self.proteus_logger_pre_post_scan_str = pre_post_scan_str
-            self.proteus_logger_track_name = track_name
-
-            logging.info(
-                "prepare_proteus_for_scan: no instance/devices configured for %s/%s",
-                pre_post_scan_str,
-                track_name,
-            )
-            return
-
-        from Tilda.Driver.ProteusListener.ProteusLogger import ProteusLogger
-        from Tilda.Driver.ProteusListener.ProteusBridge import TildaProteusBridge
-
-        # Pass in a callback so the logger can feed the live-plotting tab.
-        logger = ProteusLogger(live_data_callback=self.proteus_live_data_callback)
-        # Note: logger only needs the devices dict; instance is handled by the bridge.
-        logger.setup_log({"devices": devices_cfg}, pre_post_scan_str, track_name)
-
-        try:
-            bridge = TildaProteusBridge(logger=logger)
-        except Exception as exc:
-            logging.warning(
-                "prepare_proteus_for_scan: could not create Proteus bridge (%s). "
-                "Proteus logging will be disabled.",
-                exc,
-                exc_info=True,
-            )
-            self.proteus_logger_done = True
-            return
-
-        try:
-            bridge.connect_to_remote_instance(instance_addr)
-            bridge.configure_channels(devices_cfg)
-        except Exception as exc:
-            logging.warning(
-                "prepare_proteus_for_scan: error while connecting/configuring Proteus for "
-                "%s/%s (%s). Proteus logging will be disabled.",
-                pre_post_scan_str,
-                track_name,
-                exc,
-                exc_info=True,
-            )
-            try:
-                bridge.close()
-            except Exception:
-                logging.exception(
-                    "prepare_proteus_for_scan: error while closing Proteus bridge after failure"
-                )
-            self.proteus_logger_done = True
-            return
-
-        # If everything worked, keep bridge + logger.
-        self.proteus_logger = logger
-        self.proteus_bridge = bridge
-        self.proteus_logger_done = logger.logging_complete
-        self.proteus_logger_running = False
-        self.proteus_logger_timeout = False
-        self.proteus_logger_save_on_timeout = False
-        self.proteus_logger_timeout_time = None
-        self.proteus_logger_pre_post_scan_str = pre_post_scan_str
-        self.proteus_logger_track_name = track_name
-
-        logging.info(
-            "prepare_proteus_for_scan: Proteus logging enabled for %s/%s, "
-            "instance %s, devices %s",
-            pre_post_scan_str,
-            track_name,
-            instance_addr,
-            list(devices_cfg.keys()),
-        )
-
-    def start_proteus_log(self):
-        """Start collecting values in ProteusLogger."""
-        if self.proteus_logger is not None:
-            self.proteus_logger.start_log()
-
-    def abort_proteus_log(self):
-        """
-        Stop logging Proteus data and cleanly detach/close the Proteus bridge.
-
-        Important: we only close our local client; we do *not* shut down the
-        lab Proteus instance that is hosting the devices.
-        """
-        if self.proteus_logger is not None:
-            try:
-                self.proteus_logger.stop_log()
-            except Exception:
-                logging.exception("abort_proteus_log: error while stopping ProteusLogger")
-
-        if getattr(self, "proteus_bridge", None) is not None:
-            try:
-                self.proteus_bridge.close()
-            except Exception:
-                logging.exception("abort_proteus_log: error while closing Proteus bridge")
-
-        self.proteus_logger = None
-        self.proteus_bridge = None
-
-    def check_proteus_log_complete(
-            self,
-            scan_dict,
-            pre_post_scan_str,
-            act_track_name,
-            force_save_continue: bool = False,
-    ) -> bool:
-        """
-        Returns True when Proteus logging for this phase is finished.
-
-        If no Proteus logger is active, this is immediately True so that
-        the scan does not wait for the timeout.
-        """
-        if self.proteus_logger is None:
-            return True
-
-        completed = self.proteus_logger.logging_complete
-
-        if completed or force_save_continue:
-            self.save_proteus_log(scan_dict, act_track_name, pre_post_scan_str)
-            self.abort_proteus_log()
-            return True
-
-        return False
-
-    def get_proteus_log_data(self):
-        """Return the current log structure from the ProteusLogger."""
-        if self.proteus_logger is not None:
-            return self.proteus_logger.log
-        return {}
-
-    def proteus_live_data_callback(self, live_dict):
-        """
-        Helper passed into ProteusLogger so Proteus values show up in the
-        'pre/during/post scan measurements' tab.
-
-        live_dict is expected to look like:
-            {track_name: {'proteus': {pre_dur_post_str: {...}}}}
-        """
-        logging.debug(
-            "emitting pre_post_meas_data_dict_callback from ProteusLogger, value is %s",
-            str(live_dict),
-        )
-        try:
-            # This signal/slot is wired to TRSLivePlotWindowUi.pre_post_meas_data_dict_callback
-            self.pre_post_meas_data_dict_callback.emit(live_dict)
-        except Exception:
-            logging.exception(
-                "proteus_live_data_callback: error while emitting pre_post_meas_data_dict_callback"
-            )
-
-    def save_proteus_log(self, scan_dict, tr_name, pre_during_post_scan_str='preScan'):
-        """
-        Save the currently logged Proteus data to the XML file defined in the scan parameters.
-        For 'required', we mirror the configuration from scan_dict['proteus']:
-          - required > 0 : minimum number of requested measurements
-          - required == -1 : continuous until scan end
-        """
-        from Tilda.PolliFit import TildaTools as TiTs
-        import logging
-
-        file = scan_dict['pipeInternals']['activeXmlFilePath']
-        prot_dict = self.get_proteus_log_data()  # {'DummyDevice': {'random_variable': {...}}}
-
-        if not file or not prot_dict:
-            return
-
-        # Get the original Proteus config for this track and phase
-        track_cfg = scan_dict.get(tr_name, {})
-        prot_cfg = track_cfg.get('proteus', {})
-        phase_cfg = prot_cfg.get(pre_during_post_scan_str, {})
-        dev_cfg = phase_cfg.get('devices', {})
-
-        # Synchronise "required" with what was configured
-        for dev_name, ch_dicts in prot_dict.items():
-            cfg_dev = dev_cfg.get(dev_name, {})
-            for ch_name, ch_data in ch_dicts.items():
-                cfg_chan = cfg_dev.get(ch_name, {})
-                cfg_required = cfg_chan.get('required', ch_data.get('required', -1))
-
-                # Semantics:
-                #  - -1  → continuous
-                #  - > 0 → minimum requested number of measurements
-                ch_data['required'] = int(cfg_required)
-
-        logging.info(
-            "Proteus %s log complete, saving to: %s",
-            pre_during_post_scan_str, file
-        )
-
-        TiTs.save_proteus_to_xml(
-            file, tr_name, prot_dict,
-            pre_during_post_scan_str=pre_during_post_scan_str
-        )
-
-
 if __name__ == "__main__":
     scn_main = ScanMain()
 #     dmm_name = scn_main.prepare_dmm('Ni4071', 'PXI1Slot5')
@@ -1585,3 +1270,4 @@ if __name__ == "__main__":
 #     scn_main.abort_dmm_measurement('all')
 #     readback = scn_main.read_multimeter('all')
 #     print(readback)
+

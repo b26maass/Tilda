@@ -10,7 +10,6 @@ import functools
 import logging
 import sys
 
-from PyQt5 import QtGui
 from copy import deepcopy
 
 import numpy as np
@@ -333,7 +332,10 @@ def create_proxy(signal, slot, rate_limit=60):
 
 def create_roi(pos, size):
     roi = pg.ROI(pos, size, pen=pg.mkPen('k', width=1.5))
-    roi.handlePen = QtGui.QPen(QtGui.QColor(255, 0, 200))
+    # Use cosmetic pens for handles so they keep a fixed on-screen size while zooming.
+    # A raw QPen scales with the view transform and can appear as large pink blocks.
+    roi.handlePen = pg.mkPen(255, 0, 200, width=1)
+    roi.handleHoverPen = pg.mkPen(255, 0, 200, width=2)
 
     def hoverColor():
         # Generate the pen color for this ROI when the mouse is hovering over it

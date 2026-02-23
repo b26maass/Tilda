@@ -87,6 +87,8 @@ class TimeResolvedSequencer(Sequencer, MeasureVolt):
         """
         # write scan device class as int to fpga
         device_type = scanDevDict.get('devClass', 'DAC')
+        if scanDevDict.get('type', '') == 'NI_USB6225_AO':
+            device_type = 'Triton'
         self.scan_dev = device_type
         # write timeout in 10ns units to fpga
         timeout_s = scanDevDict.get('timeout_s', 1)  # default: 1sec = 100 000 000 * 10ns

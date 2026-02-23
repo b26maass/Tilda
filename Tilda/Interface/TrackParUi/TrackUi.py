@@ -16,8 +16,10 @@ from PyQt5 import QtCore
 from PyQt5 import QtWidgets
 
 import Tilda.Application.Config as Cfg
+from Tilda.Application.Importer import DAC_Calibration
 import Tilda.Service.Scan.ScanDictionaryOperations as SdOp
 import Tilda.Service.VoltageConversions.VoltageConversions as VCon
+from Tilda.Driver.ScanDevice.NiUsb6225ScanDevice import NiUsb6225ScanDevice
 from Tilda.Driver.DataAcquisitionFpga.TriggerTypes import TriggerTypes as TiTs
 from Tilda.Interface.TriggerWidgets import FindDesiredTriggerWidg
 from Tilda.Interface.SequencerWidgets import FindDesiredSeqWidg
@@ -69,9 +71,10 @@ class TrackUi(QtWidgets.QMainWindow, Ui_MainWindowTrackPars):
         # add scan device if not present:
         if self.buffer_pars.get('scanDevice', None) is None:
             self.buffer_pars['scanDevice'] = deepcopy(dft.draft_scan_device)
+        self._canonicalize_legacy_scan_device_labels(self.buffer_pars.get('scanDevice', {}))
 
         logging.info('%s parameters are: %s ' % (self.track_name, self.buffer_pars))
-        if self.buffer_pars['scanDevice']['devClass'] == 'DAC':
+        if self._uses_internal_fpga_dac_quantization():
             # is needed to be able to fix stop
             self.scan_dev_stop_by_user = self.calc_scan_dev_stop_val()
         else:
@@ -204,6 +207,7 @@ class TrackUi(QtWidgets.QMainWindow, Ui_MainWindowTrackPars):
         cb_post_acc_ind_before_load = self.comboBox_postAccOffsetVoltControl.currentIndex()
         logging.info('setting trackui labels by dict: %s' % str(track_dict))
         scan_dev_dict = track_dict.get('scanDevice', dft.draft_scan_device)
+        self._canonicalize_legacy_scan_device_labels(scan_dev_dict)
         logging.debug('scan dev settings in this track dict: %s' % str(track_dict['scanDevice']))
         try:
             func_list = [
@@ -212,7 +216,7 @@ class TrackUi(QtWidgets.QMainWindow, Ui_MainWindowTrackPars):
                 (self.scan_dev_class_changed,
                  self.check_for_none(scan_dev_dict.get('devClass'), 'DAC')),
                 (self.scan_type_changed,
-                 self.check_for_none(scan_dev_dict.get('type'), 'AD5781')),
+                 self.check_for_none(scan_dev_dict.get('type'), 'AD57X1(DAC)')),
                 (self.scan_dev_name_changed,
                  self.check_for_none(scan_dev_dict.get('name'), '')),
                 (self.scan_dev_timeout_set,
@@ -266,6 +270,37 @@ class TrackUi(QtWidgets.QMainWindow, Ui_MainWindowTrackPars):
         if check is None:
             check = replace
         return check
+
+    def _canonicalize_legacy_scan_device_labels(self, scan_dev):
+        """
+        Normalize legacy scan-device labels for UI display and saving.
+        Keeps old scans loadable while avoiding duplicate combobox entries.
+        """
+        if not isinstance(scan_dev, dict):
+            return
+
+        # Legacy scans may store the local NI USB-6225 under Triton.
+        if scan_dev.get('type', '') == NiUsb6225ScanDevice.DEV_TYPE and scan_dev.get('devClass', '') == 'Triton':
+            scan_dev['devClass'] = 'DAC'
+
+        # Legacy internal DAC labels used "AD5781" / "AD5781_Ser1"; canonicalize to the
+        # current AD57X1 label and configured DAC name so the UI shows only one entry.
+        legacy_dac_types = {'AD5781', 'AD57X1'}
+        canonical_dac_type = 'AD57X1(DAC)'
+        if scan_dev.get('devClass', 'DAC') == 'DAC':
+            if scan_dev.get('type', '') in legacy_dac_types:
+                scan_dev['type'] = canonical_dac_type
+            if scan_dev.get('type', '') == canonical_dac_type and scan_dev.get('name', '') in {'', 'AD5781_Ser1'}:
+                scan_dev['name'] = DAC_Calibration.dac_name
+
+    def _uses_internal_fpga_dac_quantization(self):
+        """
+        UI bit/step rounding applies only to the internal FPGA DAC, not the NI USB-6225 AO.
+        """
+        scan_dev = self.buffer_pars.get('scanDevice', {})
+        if scan_dev.get('devClass', 'DAC') != 'DAC':
+            return False
+        return scan_dev.get('type', '') != NiUsb6225ScanDevice.DEV_TYPE
 
     def update_trigger_combob(self, default_trig=None):
         """
@@ -500,7 +535,7 @@ class TrackUi(QtWidgets.QMainWindow, Ui_MainWindowTrackPars):
     def scan_dev_start_v_set(self, start_val):
         """ this will write the doublespinbox value to the working dict and set the label
         it will also call recalc_step_stop to adjust the stepsize and then fine tune the stop value """
-        if self.buffer_pars['scanDevice'].get('devClass', 'DAC') == 'DAC':
+        if self._uses_internal_fpga_dac_quantization():
             # calculate everything according to the DAC and keep 18Bits in mind!
             start_18bit = VCon.get_nbits_from_voltage(start_val)
             start_val = VCon.get_voltage_from_bits(start_18bit)  # overwrite start_val with nearest possible val
@@ -527,7 +562,7 @@ class TrackUi(QtWidgets.QMainWindow, Ui_MainWindowTrackPars):
 
     def display_stop(self, stop):
         """ function only for displaying the stop value """
-        if self.buffer_pars['scanDevice'].get('devClass', 'DAC') == 'DAC':
+        if self._uses_internal_fpga_dac_quantization():
             stop_18bit = VCon.get_nbits_from_voltage(stop)
             stop = VCon.get_voltage_from_bits(stop_18bit)
             self.label_dacStopV_set.setText(str(round(stop, 8)) + ' | ' + str(stop_18bit))
@@ -572,7 +607,7 @@ class TrackUi(QtWidgets.QMainWindow, Ui_MainWindowTrackPars):
             step = self.check_for_none(self.buffer_pars['scanDevice'].get('stepSize', None), 1)
             num_of_steps = self.check_for_none(self.buffer_pars['nOfSteps'], 1)
             stop = start + step * (num_of_steps - 1)
-            if self.buffer_pars['scanDevice'].get('devClass', 'DAC') == 'DAC':
+            if self._uses_internal_fpga_dac_quantization():
                 start_18b = VCon.get_nbits_from_voltage(start)  # change to bits first
                 step_18bit = VCon.get_nbit_stepsize(step)
                 stop_18bit = VCon.calc_dac_stop_18bit(start_18b, step_18bit, num_of_steps)
@@ -594,7 +629,7 @@ class TrackUi(QtWidgets.QMainWindow, Ui_MainWindowTrackPars):
                 stepsize = dis / (steps - 1)
             except ZeroDivisionError:
                 stepsize = 0
-            if self.buffer_pars['scanDevice'].get('devClass', 'DAC') == 'DAC':
+            if self._uses_internal_fpga_dac_quantization():
                 # for DAC bitwise calc!
                 start_18b = VCon.get_nbits_from_voltage(start)  # change to bits first
                 stop_18b = VCon.get_nbits_from_voltage(stop)
@@ -702,7 +737,7 @@ class TrackUi(QtWidgets.QMainWindow, Ui_MainWindowTrackPars):
                 n_of_steps = dis / abs(step_size)
             except ZeroDivisionError:
                 n_of_steps = 0
-            if self.buffer_pars['scanDevice'].get('devClass', 'DAC') == 'DAC':
+            if self._uses_internal_fpga_dac_quantization():
                 # for DAC bitwise calc!
                 start_18b = VCon.get_nbits_from_voltage(start)  # change to bits first
                 stop_18b = VCon.get_nbits_from_voltage(stop)
@@ -715,7 +750,7 @@ class TrackUi(QtWidgets.QMainWindow, Ui_MainWindowTrackPars):
 
     def scan_dev_step_size_set(self, step_size):
         """ if the stepsize is set, adjust the number of steps to keep start and stop constant"""
-        if self.buffer_pars['scanDevice'].get('devClass', 'DAC') == 'DAC':
+        if self._uses_internal_fpga_dac_quantization():
             # for DAC bitwise calc!
             step_18bit = VCon.get_nbit_stepsize(step_size)
             step_size = VCon.get_stepsize_in_volt_from_bits(step_18bit)
@@ -727,7 +762,7 @@ class TrackUi(QtWidgets.QMainWindow, Ui_MainWindowTrackPars):
     def display_step_size(self, step_size):
         """ stores the stepSize to the working dictionary and displays them """
         self.buffer_pars['scanDevice']['stepSize'] = step_size
-        if self.buffer_pars['scanDevice'].get('devClass', 'DAC') == 'DAC':
+        if self._uses_internal_fpga_dac_quantization():
             # for DAC bitwise calc!
             step_18bit = VCon.get_nbit_stepsize(step_size)
             step_size = VCon.get_stepsize_in_volt_from_bits(step_18bit)
@@ -854,6 +889,7 @@ class TrackUi(QtWidgets.QMainWindow, Ui_MainWindowTrackPars):
 
     def confirm(self):
         """ closes the window and overwrites the corresponding track in the main """
+        self._canonicalize_legacy_scan_device_labels(self.buffer_pars.get('scanDevice', {}))
         start = self.buffer_pars['scanDevice']['start']
         stop = self.buffer_pars['scanDevice']['stop']
         self.buffer_pars = SdOp.merge_dicts(self.buffer_pars, self.sequencer_widget.get_seq_pars(start, stop))
@@ -934,3 +970,4 @@ if __name__ == '__main__':
     # gui.load_from_text(txt_path='E:\\TildaDebugging\\Pulsepattern123Pattern.txt')
     # print(gui.get_gr_v_pos_from_list_of_cmds())
     app.exec_()
+

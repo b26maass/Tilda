@@ -10,6 +10,7 @@ import Tilda.Service.VoltageConversions.VoltageConversions as VCon
 from Tilda.Application.Importer import DAC_Calibration
 from Tilda.PolliFit.Measurement.SpecData import SpecDataXAxisUnits as Units
 from Tilda.Driver.ScanDevice.BaseTildaScanDeviceControl import BaseTildaScanDeviceControl
+from Tilda.Driver.ScanDevice.NiUsb6225ScanDevice import NiUsb6225ScanDevice
 
 
 class AD57X1ScanDev(BaseTildaScanDeviceControl):
@@ -25,6 +26,9 @@ class AD57X1ScanDev(BaseTildaScanDeviceControl):
         return the scan device info
         -> currently only one dac available.... adapt maybe if needed
         """
+        if dev_type == NiUsb6225ScanDevice.DEV_TYPE:
+            return NiUsb6225ScanDevice(dev_name).return_scan_dev_info(dev_type, dev_name)
+
         draft_scan_dev_dict = {
             'name': DAC_Calibration.dac_name,
             'type': 'AD57X1(DAC)',  # what type of device, e.g. AD5781(DAC) / Matisse (laser)
@@ -48,6 +52,8 @@ class AD57X1ScanDev(BaseTildaScanDeviceControl):
         :param type: str, type of the device (e.g. AD5781 / Matisse)
         :return: list of strings with available names
         """
+        if type == NiUsb6225ScanDevice.DEV_TYPE:
+            return NiUsb6225ScanDevice.available_channels()
         return [self.return_scan_dev_info()['name']]
 
     def available_scan_dev_types(self):
@@ -55,4 +61,8 @@ class AD57X1ScanDev(BaseTildaScanDeviceControl):
         return a list of available scan device types for this devClass
         :return: list of strings with available types
         """
-        return [self.return_scan_dev_info()['type']]
+        dev_types = [self.return_scan_dev_info()['type']]
+        ni_ao_channels = NiUsb6225ScanDevice.available_channels()
+        if (ni_ao_channels or NiUsb6225ScanDevice._nidaq_available()) and NiUsb6225ScanDevice.DEV_TYPE not in dev_types:
+            dev_types.append(NiUsb6225ScanDevice.DEV_TYPE)
+        return dev_types

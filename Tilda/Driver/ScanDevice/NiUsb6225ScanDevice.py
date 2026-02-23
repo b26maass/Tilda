@@ -25,7 +25,7 @@ class NiUsb6225ScanDevice(BaseTildaScanDeviceControl):
     """
 
     DEV_TYPE = 'NI_USB6225_AO'
-    DEV_CLASS = 'Triton'
+    DEV_CLASS = 'DAC'
     SET_VAL_LIMIT = (-10.0, 10.0)
     STEP_SIZE_LIMIT = (1e-6, 20.0)
 

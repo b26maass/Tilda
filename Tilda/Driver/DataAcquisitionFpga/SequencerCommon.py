@@ -87,6 +87,9 @@ class Sequencer(FPGAInterfaceHandling):
         """
         # write scan device class as int to fpga
         device_class = scanDevDict.get('devClass', 'DAC')
+        if scanDevDict.get('type', '') == 'NI_USB6225_AO':
+            # Local NI AO is grouped with DACs in the UI, but behaves like an external scan device for the FPGA.
+            device_class = 'Triton'
         device_class = getattr(ScTypes, device_class)  # must be int, values defined in ScanDeviceTypes
         self.ReadWrite(self.config.ScanDevice, device_class.value)  # int
         # write timeout in 10ns units to fpga

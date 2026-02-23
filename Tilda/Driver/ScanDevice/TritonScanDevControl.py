@@ -176,10 +176,6 @@ class TritonScanDevControl(DeviceBase, BaseTildaScanDeviceControl):
             logging.warning('no db connection, returning local DummyScanDev!')
             dev_types = [self.dummy_scan_dev_type, 'Matisse']
 
-        ni_ao_channels = NiUsb6225ScanDevice.available_channels()
-        if (ni_ao_channels or NiUsb6225ScanDevice._nidaq_available()) and \
-                NiUsb6225ScanDevice.DEV_TYPE not in dev_types:
-            dev_types.append(NiUsb6225ScanDevice.DEV_TYPE)
         return dev_types
 
     def available_scan_dev_names_by_type(self, dev_type):
@@ -189,9 +185,6 @@ class TritonScanDevControl(DeviceBase, BaseTildaScanDeviceControl):
         :return: list of strings, ['dev_name1', 'dev_name2', ... ]
         """
         dev_names = []
-
-        if dev_type == NiUsb6225ScanDevice.DEV_TYPE:
-            return NiUsb6225ScanDevice.available_channels()
 
         if self.db != 'local':
             self.dbCur_execute("SELECT deviceName FROM devices WHERE deviceType = %s", (dev_type,))
