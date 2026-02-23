@@ -39,7 +39,8 @@ def find_pipe_by_seq_type(scan_dict, callback_sig, live_plot_callback_tuples,
                                live_plot_callbacks=live_plot_callback_tuples,
                                fit_res_dict_callback=fit_res_callback_dict,
                                scan_complete_callback=scan_complete_callback,
-                               dac_new_volt_set_callback=dac_new_volt_set_callback)
+                               dac_new_volt_set_callback=dac_new_volt_set_callback,
+                               next_step_request_sig=next_step_request_sig)
     else:
         return None
 
@@ -161,8 +162,9 @@ def kepco_scan_pipe(initial_scan_pars, callback_sig=None, as_voltage=False,
     # raw data for kepco -> dict -> cannot be saved with hdf5 -> do not save raw data
     # walk = start.attach(TN.NSaveRawData())
     # debug = start.attach(SN.NPrint())
-    specdata_path = start.attach(TN.NStartNodeKepcoScan(as_voltage, dmm_names,
-                                                        scan_complete_callback, dac_new_volt_set_callback))
+    specdata_path = start.attach(TN.NSendNextStepRequestViaQtSignal(next_step_request_sig))
+    specdata_path = specdata_path.attach(TN.NStartNodeKepcoScan(as_voltage, dmm_names,
+                                                                scan_complete_callback, dac_new_volt_set_callback))
     specdata_path = specdata_path.attach(TN.NSendnOfCompletedStepsViaQtSignal(callback_sig))
 
     specdata_path = specdata_path.attach(TN.NMPLImagePlotAndSaveSpecData(0, *live_plot_callbacks))

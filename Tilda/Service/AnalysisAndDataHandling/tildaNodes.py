@@ -66,6 +66,9 @@ class NSendNextStepRequestViaQtSignal(Node):
         self.qt_signal = qt_signal
 
     def processData(self, data, pipeData):
+        if not isinstance(data, np.ndarray):
+            # Kepco pipelines also feed DMM readback dicts through this path.
+            return data
         request_next_step = Form.add_header_to23_bit(4, 4, 0, 1)  # binary for preparing next step
         req_list = np.where(data == request_next_step)[0]
         if req_list.size:
@@ -959,10 +962,13 @@ class NStartNodeKepcoScan(Node):
                 # splitup each element in data and analyse what it means:
                 first_header, second_header, header_index, payload = Form.split_32b_data(raw_data)
 
-                if first_header == Progs.infoHandler.value:
+                if first_header == Progs.infoHandler.value and header_index == 1:
                     v_ind, step_completed = self.info_handl.info_handle(pipeData, payload)
                     if v_ind is not None:
                         self.curVoltIndex = v_ind
+                elif first_header == Progs.infoHandler.value:
+                    logging.warning('ignoring infoHandler word with unexpected header_index=%s, payload=%s',
+                                    header_index, payload)
                 elif first_header == Progs.errorHandler.value:
                     logging.error('fpga sends error code: ' + str(payload) + 'or in binary: ' + str(
                         '{0:032b}'.format(payload)))
@@ -992,7 +998,7 @@ class NStartNodeKepcoScan(Node):
             for dmm_name in self.dmms:  # this would only fail if creation of self.dmm was wrong
                 dmm_ind = self.dmms.index(dmm_name)  # raise exception when not found
                 compl_list.append(not np.any(np.isnan(self.spec_data.cts[track_ind][dmm_ind])))
-            all_readings_for_all_dmms_have_ben_acquired = np.alltrue(compl_list)
+            all_readings_for_all_dmms_have_ben_acquired = np.all(compl_list)
 
         # if self.spec_data is not None:
         #     num_of_steps = len(self.spec_data.x[track_ind])

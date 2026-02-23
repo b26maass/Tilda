@@ -70,6 +70,9 @@ class InfoHandler:
             # This will not be handled by InfoHandler but in a separate node.
             return None, step_complete
 
+        logging.warning('InfoHandler received unknown payload: %s', payload)
+        return None, step_complete
+
     def sign_for_volt_ind(self, invert_scan):
         even_scan_num = self.total_started_scans % 2 == 0
         if invert_scan:

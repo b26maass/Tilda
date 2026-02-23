@@ -86,7 +86,7 @@ class Ni4071MeasCompleteLoc(Enum):
 
 class Ni4071PreConfigs(Enum):
     initial = {
-        'range': '10.0',
+        'range': '1000.0',
         'resolution': '7.5',
         'nplc': '10',
         'triggerCount': 5,
@@ -98,14 +98,14 @@ class Ni4071PreConfigs(Enum):
         'triggerDelay_s': 0,
         'triggerSlope': 'rising',
         'measurementCompleteDestination': Ni4071MeasCompleteLoc.PXI_Trigger_4.name,
-        'highInputResistanceTrue': True,
+        'highInputResistanceTrue': False,
         'assignment': 'offset',
         'accuracy': (None, None),
         'preConfName': 'initial'
     }
     periodic = {
-        'range': '10.0',
-        'resolution': '6.5',
+        'range': '1000.0',
+        'resolution': '7.5',
         'nplc': '10',
         'triggerCount': 0,
         'sampleCount': 0,
@@ -116,13 +116,13 @@ class Ni4071PreConfigs(Enum):
         'triggerDelay_s': 0,
         'triggerSlope': 'rising',
         'measurementCompleteDestination': Ni4071MeasCompleteLoc.PXI_Trigger_4.name,
-        'highInputResistanceTrue': True,
+        'highInputResistanceTrue': False,
         'accuracy': (None, None),
         'assignment': 'offset',
         'preConfName': 'periodic'
     }
     pre_scan = {
-        'range': '10.0',
+        'range': '1000.0',
         'resolution': '7.5',
         'nplc': '100',
         'triggerCount': 0,
@@ -134,13 +134,13 @@ class Ni4071PreConfigs(Enum):
         'triggerDelay_s': 0,
         'triggerSlope': 'rising',
         'measurementCompleteDestination': Ni4071MeasCompleteLoc.PXI_Trigger_4.name,
-        'highInputResistanceTrue': True,
+        'highInputResistanceTrue': False,
         'accuracy': (None, None),
         'assignment': 'offset',
         'preConfName': 'pre_scan'
     }
     kepco = {
-        'range': '10.0',
+        'range': '1000.0',
         'resolution': '7.5',
         'nplc': '100',
         'triggerCount': 0,
@@ -148,11 +148,11 @@ class Ni4071PreConfigs(Enum):
         'autoZero': -1,
         'triggerSource': Ni4071TriggerSources.pxi_trig_3.name,
         'sampleInterval': -1,
-        'powerLineFrequency': '50.0',
-        'triggerDelay_s': 0.5,
+        'powerLineFrequency': '60.0',
+        'triggerDelay_s': 0.05,
         'triggerSlope': 'rising',
         'measurementCompleteDestination': Ni4071MeasCompleteLoc.PXI_Trigger_4.name,
-        'highInputResistanceTrue': True,
+        'highInputResistanceTrue': False,
         'accuracy': (None, None),
         'assignment': 'offset',
         'preConfName': 'kepco'
@@ -165,7 +165,7 @@ class Ni4071:
     """
 
     def __init__(self, reset=True, address_str='PXI1Slot5', pwr_line_freq='50.0'):
-        dll_path = path.join(path.dirname(__file__), pardir, pardir, pardir, 'binary\\nidmm_32.dll')
+        dll_path = path.join(path.dirname(__file__), pardir, pardir, pardir, 'Tilda\\binary\\nidmm_64.dll')
 
         self.type = 'Ni4071'
         self.state = 'None'
